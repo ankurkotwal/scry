@@ -1,0 +1,192 @@
+#!/bin/sh
+#
+# scry - one-line system status dashboard, byobu-inspired
+#
+# Copyright 2026 Ankur Kotwal
+# Licensed under the Apache License, Version 2.0
+
+set -u
+
+SEGMENTS="uptime,temperature,load,cpufreq,ram,disk,timestamp"
+DISK_MOUNT="/"
+TIME_FORMAT="%Y-%m-%d %H:%M:%S"
+SEPARATOR=" | "
+COLOR_MODE="auto"
+
+print_help() {
+    cat <<'EOF'
+Usage: scry [OPTIONS]
+
+One-line system status dashboard, byobu-inspired.
+
+Options:
+  --segments=LIST     Comma-separated segment order
+                      (default: uptime,temperature,load,cpufreq,ram,disk,timestamp)
+  --disk=PATH         Mount point for the disk segment (default: /)
+  --time-format=FMT   strftime format for the timestamp (default: %Y-%m-%d %H:%M:%S)
+  --separator=STR     Separator between segments (default: " | ")
+  --color=MODE        Color output: auto|always|never (default: auto)
+  -h, --help          Show this help and exit
+EOF
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --segments=*)    SEGMENTS=${1#*=} ;;
+        --segments)      shift; SEGMENTS=${1:?--segments requires a value} ;;
+        --disk=*)        DISK_MOUNT=${1#*=} ;;
+        --disk)          shift; DISK_MOUNT=${1:?--disk requires a value} ;;
+        --time-format=*) TIME_FORMAT=${1#*=} ;;
+        --time-format)   shift; TIME_FORMAT=${1:?--time-format requires a value} ;;
+        --separator=*)   SEPARATOR=${1#*=} ;;
+        --separator)     shift; SEPARATOR=${1:?--separator requires a value} ;;
+        --color=*)       COLOR_MODE=${1#*=} ;;
+        --color)         shift; COLOR_MODE=${1:?--color requires a value} ;;
+        -h|--help)       print_help; exit 0 ;;
+        *) printf 'scry: unknown argument: %s\n' "$1" >&2; exit 2 ;;
+    esac
+    shift
+done
+
+case "$COLOR_MODE" in
+    always) USE_COLOR=1 ;;
+    never)  USE_COLOR=0 ;;
+    auto)   if [ -t 1 ]; then USE_COLOR=1; else USE_COLOR=0; fi ;;
+    *) printf 'scry: invalid --color value: %s\n' "$COLOR_MODE" >&2; exit 2 ;;
+esac
+
+C_RESET=""; C_UPTIME=""; C_TEMP=""; C_LOAD=""
+C_CPUFREQ=""; C_RAM=""; C_DISK=""; C_TS=""
+if [ "$USE_COLOR" -eq 1 ]; then
+    ESC=$(printf '\033')
+    C_RESET="${ESC}[0m"
+    C_UPTIME="${ESC}[1;37m"
+    C_TEMP="${ESC}[1;33m"
+    C_LOAD="${ESC}[33m"
+    C_CPUFREQ="${ESC}[1;36m"
+    C_RAM="${ESC}[1;32m"
+    C_DISK="${ESC}[1;35m"
+    C_TS="${ESC}[37m"
+fi
+
+seg_uptime() {
+    [ -r /proc/uptime ] || return 1
+    read -r u _ < /proc/uptime
+    u=${u%.*}
+    if [ "$u" -ge 86400 ]; then
+        printf '%dd%dh' "$((u / 86400))" "$(((u % 86400) / 3600))"
+    elif [ "$u" -ge 3600 ]; then
+        printf '%dh%dm' "$((u / 3600))" "$(((u % 3600) / 60))"
+    elif [ "$u" -ge 60 ]; then
+        printf '%dm' "$((u / 60))"
+    else
+        printf '%ds' "$u"
+    fi
+}
+
+seg_temperature() {
+    for path in /sys/class/hwmon/hwmon*/temp*_input \
+                /sys/class/hwmon/hwmon*/device/temp*_input \
+                /sys/class/thermal/thermal_zone*/temp; do
+        [ -r "$path" ] || continue
+        milli=$(cat "$path" 2>/dev/null) || continue
+        case "$milli" in
+            ''|*[!0-9]*) continue ;;
+        esac
+        if [ "$milli" -gt 0 ]; then
+            printf '%d°C' "$((milli / 1000))"
+            return 0
+        fi
+    done
+    return 1
+}
+
+seg_load() {
+    [ -r /proc/loadavg ] || return 1
+    read -r one _ < /proc/loadavg
+    printf '%s' "$one"
+}
+
+seg_cpufreq() {
+    if [ -r /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq ]; then
+        read -r khz < /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq
+        awk -v k="$khz" 'BEGIN { printf "%.1fGHz", k/1000000 }'
+        return 0
+    fi
+    if [ -r /proc/cpuinfo ]; then
+        mhz=$(awk -F: '/^cpu MHz/ { gsub(/[ \t]/,"",$2); print $2; exit }' /proc/cpuinfo)
+        if [ -n "$mhz" ]; then
+            awk -v m="$mhz" 'BEGIN { printf "%.1fGHz", m/1000 }'
+            return 0
+        fi
+    fi
+    return 1
+}
+
+seg_ram() {
+    [ -r /proc/meminfo ] || return 1
+    awk '
+        /^MemTotal:/     { total = $2 }
+        /^MemAvailable:/ { avail = $2 }
+        END {
+            if (!total) exit 1
+            used = total - avail
+            pct = int(100 * used / total + 0.5)
+            if (total >= 1048576) printf "%.1fGB %d%%", total/1048576, pct
+            else                  printf "%dMB %d%%",  int(total/1024 + 0.5), pct
+        }
+    ' /proc/meminfo
+}
+
+seg_disk() {
+    line=$(df -P -k -- "$DISK_MOUNT" 2>/dev/null | awk 'NR==2 { print $2, $5 }')
+    [ -n "$line" ] || return 1
+    set -- $line
+    [ $# -ge 2 ] || return 1
+    total_kb=$1
+    pct=${2%\%}
+    awk -v k="$total_kb" -v p="$pct" 'BEGIN {
+        b = k * 1024
+        if (b >= 1024^4)      printf "%.1fTB %d%%", b/1024^4, p
+        else if (b >= 1024^3) printf "%dGB %d%%",   int(b/1024^3 + 0.5), p
+        else                  printf "%dMB %d%%",   int(b/1024^2 + 0.5), p
+    }'
+}
+
+seg_timestamp() {
+    date "+$TIME_FORMAT"
+}
+
+render_segment() {
+    name=$1
+    color=""
+    case "$name" in
+        uptime)      value=$(seg_uptime)      || return 1; color=$C_UPTIME ;;
+        temperature) value=$(seg_temperature) || return 1; color=$C_TEMP ;;
+        load)        value=$(seg_load)        || return 1; color=$C_LOAD ;;
+        cpufreq)     value=$(seg_cpufreq)     || return 1; color=$C_CPUFREQ ;;
+        ram)         value=$(seg_ram)         || return 1; color=$C_RAM ;;
+        disk)        value=$(seg_disk)        || return 1; color=$C_DISK ;;
+        timestamp)   value=$(seg_timestamp)   || return 1; color=$C_TS ;;
+        *) printf 'scry: unknown segment: %s\n' "$name" >&2; return 2 ;;
+    esac
+    [ -n "$value" ] || return 1
+    printf '%s%s%s' "$color" "$value" "$C_RESET"
+}
+
+SEGMENTS_LIST=$(printf '%s' "$SEGMENTS" | tr ',' ' ')
+output=""
+for name in $SEGMENTS_LIST; do
+    [ -n "$name" ] || continue
+    rendered=$(render_segment "$name")
+    rc=$?
+    [ $rc -eq 2 ] && exit 2
+    [ $rc -ne 0 ] && continue
+    if [ -n "$output" ]; then
+        output="$output$SEPARATOR$rendered"
+    else
+        output="$rendered"
+    fi
+done
+
+printf '%s\n' "$output"

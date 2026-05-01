@@ -25,21 +25,23 @@ Example output:
 | `load` | `/proc/loadavg` (1-minute average) |
 | `cpufreq` | `/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq`, falling back to `/proc/cpuinfo` |
 | `ram` | `/proc/meminfo` (`MemTotal` − `MemAvailable`) |
-| `disk` | `os.statvfs()` on the configured mount |
-| `timestamp` | `datetime.strftime` with the configured format |
+| `disk` | `df -P -k` on the configured mount |
+| `timestamp` | `date(1)` with the configured format |
 
-These are the same data sources [byobu](https://byobu.org) uses, read directly — no `df`, `free`, `uptime`, or `sensors` subprocess. Pure Python stdlib, zero dependencies.
+These are the same data sources [byobu](https://byobu.org) uses. `scry` is a single POSIX shell script — no runtime, no dependencies beyond standard Unix utilities (`awk`, `df`, `date`, `tr`).
 
 ## Install
 
+Copy the script anywhere on your `$PATH`:
+
 ```sh
-pip install -e .
+install -m 755 scry /usr/local/bin/scry
 ```
 
-Or run without installing:
+Or run it in place:
 
 ```sh
-python -m scry
+./scry
 ```
 
 ## Usage
@@ -72,7 +74,8 @@ scry --segments=load,ram,timestamp --color=never
 
 ## Requirements
 
-- Python ≥ 3.10
+- POSIX shell (`/bin/sh`)
+- `awk`, `df`, `date`, `tr` (any standard coreutils install)
 - Linux (reads from `/proc` and `/sys`)
 
 ## License
