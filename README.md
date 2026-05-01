@@ -72,7 +72,7 @@ set -g status-right "#(scry --color=never)"
 scry --segments=load,ram,timestamp --color=never
 ```
 
-**zellij** — zellij's built-in status bar can't take a custom command, so the easiest path is the [zjstatus](https://github.com/dj95/zjstatus) plugin. See [examples/zellij/default.kdl](examples/zellij/default.kdl) for a copy-pasteable layout that puts scry in the top-right.
+**zellij** — zellij's built-in status bar can't take a custom command, so the easiest path is the [zjstatus](https://github.com/dj95/zjstatus) plugin. Configure it with `command_scry_command "scry --color=always"` and reference `{command_scry}` in your `format_right`.
 
 ## Requirements
 
