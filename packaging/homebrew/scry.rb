@@ -18,7 +18,7 @@ class Scry < Formula
   desc "One-line system status dashboard, byobu-inspired"
   homepage "https://github.com/ankurkotwal/scry"
   url "https://github.com/ankurkotwal/scry/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 "REPLACE_WITH_TARBALL_SHA256"
+  sha256 "e10b01305aea0a7de2d535bbc2e580dee8bf03cf8791d9d0d6b62f28585e28a5"
   license "Apache-2.0"
 
   livecheck do
