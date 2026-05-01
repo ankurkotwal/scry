@@ -18,17 +18,17 @@ Example output:
 15h43m | 34°C | 1.27 | 4.1GHz | 15.3GB 21% | 219GB 95% | 2026-05-01 12:21:11
 ```
 
-| Segment | Source |
-|---|---|
-| `uptime` | `/proc/uptime` |
-| `temperature` | `/sys/class/hwmon/hwmon*/temp*_input`, falling back to `/sys/class/thermal/thermal_zone*/temp` |
-| `load` | `/proc/loadavg` (1-minute average) |
-| `cpufreq` | `/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq`, falling back to `/proc/cpuinfo` |
-| `ram` | `/proc/meminfo` (`MemTotal` − `MemAvailable`) |
-| `disk` | `df -P -k` on the configured mount |
-| `timestamp` | `date(1)` with the configured format |
+| Segment | Linux | macOS |
+|---|---|---|
+| `uptime` | `/proc/uptime` | `sysctl -n kern.boottime` |
+| `temperature` | `/sys/class/hwmon/...`, falling back to `/sys/class/thermal/...` | *unavailable without sudo or a third-party tool — segment skipped* |
+| `load` | `/proc/loadavg` | `sysctl -n vm.loadavg` |
+| `cpufreq` | `/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq`, falling back to `/proc/cpuinfo` | `sysctl -n hw.cpufrequency` (Intel only — Apple Silicon has no fixed clock; segment skipped) |
+| `ram` | `/proc/meminfo` (`MemTotal` − `MemAvailable`) | `sysctl -n hw.memsize` + `vm_stat` |
+| `disk` | `df -P -k` on the configured mount | same |
+| `timestamp` | `date(1)` with the configured format | same |
 
-These are the same data sources [byobu](https://byobu.org) uses. `scry` is a single POSIX shell script — no runtime, no dependencies beyond standard Unix utilities (`awk`, `df`, `date`, `tr`).
+These are the same data sources [byobu](https://byobu.org) uses. `scry` is a single POSIX shell script — no runtime, no dependencies beyond standard Unix utilities (`awk`, `df`, `date`, `tr`, plus `sysctl`/`vm_stat` on macOS).
 
 ## Install
 
@@ -72,11 +72,13 @@ set -g status-right "#(scry --color=never)"
 scry --segments=load,ram,timestamp --color=never
 ```
 
+**zellij** — zellij's built-in status bar can't take a custom command, so the easiest path is the [zjstatus](https://github.com/dj95/zjstatus) plugin. See [examples/zellij/default.kdl](examples/zellij/default.kdl) for a copy-pasteable layout that puts scry in the top-right.
+
 ## Requirements
 
 - POSIX shell (`/bin/sh`)
 - `awk`, `df`, `date`, `tr` (any standard coreutils install)
-- Linux (reads from `/proc` and `/sys`)
+- Linux (`/proc`, `/sys`) **or** macOS (`sysctl`, `vm_stat`)
 
 ## License
 

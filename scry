@@ -70,9 +70,15 @@ if [ "$USE_COLOR" -eq 1 ]; then
 fi
 
 seg_uptime() {
-    [ -r /proc/uptime ] || return 1
-    read -r u _ < /proc/uptime
-    u=${u%.*}
+    if [ -r /proc/uptime ]; then
+        read -r u _ < /proc/uptime
+        u=${u%.*}
+    else
+        # macOS: derive uptime from kern.boottime epoch
+        boot=$(sysctl -n kern.boottime 2>/dev/null | awk '{print $4}' | tr -d ',')
+        [ -n "$boot" ] || return 1
+        u=$(($(date +%s) - boot))
+    fi
     if [ "$u" -ge 86400 ]; then
         printf '%dd%dh' "$((u / 86400))" "$(((u % 86400) / 3600))"
     elif [ "$u" -ge 3600 ]; then
@@ -102,8 +108,13 @@ seg_temperature() {
 }
 
 seg_load() {
-    [ -r /proc/loadavg ] || return 1
-    read -r one _ < /proc/loadavg
+    if [ -r /proc/loadavg ]; then
+        read -r one _ < /proc/loadavg
+    else
+        # macOS: vm.loadavg outputs "{ 1.23 1.45 1.67 }"
+        one=$(sysctl -n vm.loadavg 2>/dev/null | awk '{print $2}')
+    fi
+    [ -n "$one" ] || return 1
     printf '%s' "$one"
 }
 
@@ -120,22 +131,48 @@ seg_cpufreq() {
             return 0
         fi
     fi
+    # macOS Intel: hw.cpufrequency returns Hz. Apple Silicon has no fixed
+    # clock so this returns nothing and the segment is skipped.
+    hz=$(sysctl -n hw.cpufrequency 2>/dev/null)
+    if [ -n "$hz" ]; then
+        awk -v h="$hz" 'BEGIN { printf "%.1fGHz", h/1000000000 }'
+        return 0
+    fi
     return 1
 }
 
 seg_ram() {
-    [ -r /proc/meminfo ] || return 1
-    awk '
-        /^MemTotal:/     { total = $2 }
-        /^MemAvailable:/ { avail = $2 }
+    if [ -r /proc/meminfo ]; then
+        awk '
+            /^MemTotal:/     { total = $2 }
+            /^MemAvailable:/ { avail = $2 }
+            END {
+                if (!total) exit 1
+                used = total - avail
+                pct = int(100 * used / total + 0.5)
+                if (total >= 1048576) printf "%.1fGB %d%%", total/1048576, pct
+                else                  printf "%dMB %d%%",  int(total/1024 + 0.5), pct
+            }
+        ' /proc/meminfo
+        return $?
+    fi
+    # macOS: total bytes from sysctl, free pages from vm_stat
+    total=$(sysctl -n hw.memsize 2>/dev/null)
+    ps=$(sysctl -n hw.pagesize 2>/dev/null)
+    [ -n "$total" ] && [ -n "$ps" ] || return 1
+    vm_stat 2>/dev/null | awk -v total="$total" -v ps="$ps" '
+        /^Pages free:/        { gsub(/\./, "", $3); free = $3 }
+        /^Pages inactive:/    { gsub(/\./, "", $3); inactive = $3 }
+        /^Pages speculative:/ { gsub(/\./, "", $3); spec = $3 }
+        /^Pages purgeable:/   { gsub(/\./, "", $3); purgeable = $3 }
         END {
-            if (!total) exit 1
-            used = total - avail
+            free_bytes = (free + inactive + spec + purgeable) * ps
+            used = total - free_bytes
             pct = int(100 * used / total + 0.5)
-            if (total >= 1048576) printf "%.1fGB %d%%", total/1048576, pct
-            else                  printf "%dMB %d%%",  int(total/1024 + 0.5), pct
+            if (total >= 1024^3) printf "%.1fGB %d%%", total/1024^3, pct
+            else                 printf "%dMB %d%%",  int(total/1024^2 + 0.5), pct
         }
-    ' /proc/meminfo
+    '
 }
 
 seg_disk() {
