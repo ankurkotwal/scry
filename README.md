@@ -32,7 +32,13 @@ These are the same data sources [byobu](https://byobu.org) uses. `scry` is a sin
 
 ## Install
 
-Copy the script anywhere on your `$PATH`:
+Via Homebrew (macOS or Linux):
+
+```sh
+brew install ankurkotwal/scry/scry
+```
+
+Or copy the script anywhere on your `$PATH`:
 
 ```sh
 install -m 755 scry /usr/local/bin/scry
